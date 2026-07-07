@@ -6,3 +6,5 @@ venv/
 *.tfstate
 *.tfstate.backup
 .env
+infra/lambda.zip
+infra/.terraform/
