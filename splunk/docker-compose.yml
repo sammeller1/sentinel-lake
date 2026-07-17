@@ -1,0 +1,15 @@
+version: "3.8"
+
+services:
+  splunk:
+    image: splunk/splunk:latest
+    container_name: splunk
+    ports:
+      - "8000:8000"   # Web UI
+      - "8089:8089"   # Management API (optional, useful for scripting)
+    environment:
+      - SPLUNK_START_ARGS=--accept-license
+      - SPLUNK_PASSWORD=${SPLUNK_PASSWORD:-Splunk123!}
+    volumes:
+      - ../sample-logs:/tmp/sentinel-lake-logs:ro
+    restart: unless-stopped

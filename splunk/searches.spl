@@ -1,0 +1,83 @@
+# Sentinel Lake — Splunk (SPL) Detections
+# Mirrors the exact detection logic in src/normalize.py's detect() function,
+# reproducing the same three findings using SPL instead of Python/Athena SQL.
+# Verified working against live Splunk (Splunk Enterprise, Docker) on 2026-07-17.
+#
+# Ingest setup: upload sample-logs/auth.log as sourcetype=linux_secure and
+# sample-logs/firewall.log as sourcetype=linux_firewall, both into the
+# "security" index.
+
+# ---------------------------------------------------------------------------
+# 1) SSH brute force: 3+ failed logins from the same source IP
+#    (matches: auth_fails[ip] >= threshold, default threshold=3)
+# ---------------------------------------------------------------------------
+index=security sourcetype=linux_secure "Failed password"
+| rex "from (?<src_ip>\d+\.\d+\.\d+\.\d+)"
+| stats count as failed_logins by src_ip
+| where failed_logins >= 3
+| sort -failed_logins
+
+# Result: 203.0.113.42 -> 4 failed logins (flagged)
+
+# ---------------------------------------------------------------------------
+# 2) Firewall blocks per source IP
+#    (matches: fw_blocks[ip] count from UFW BLOCK lines)
+# ---------------------------------------------------------------------------
+index=security sourcetype=linux_firewall "[UFW BLOCK]"
+| rex "SRC=(?<src_ip>\S+)"
+| stats count as blocked_connections by src_ip
+| sort -blocked_connections
+
+# Result: 203.0.113.42 -> 2 blocks, 45.146.165.9 -> 2 blocks
+
+# Sentinel Lake — Splunk (SPL) Detections
+# Mirrors the exact detection logic in src/normalize.py's detect() function,
+# reproducing the same three findings using SPL instead of Python/Athena SQL.
+# Verified working against live Splunk (Splunk Enterprise, Docker) on 2026-07-17.
+#
+# Ingest setup: upload sample-logs/auth.log as sourcetype=linux_secure and
+# sample-logs/firewall.log as sourcetype=linux_firewall, both into the
+# "security" index.
+
+# ---------------------------------------------------------------------------
+# 1) SSH brute force: 3+ failed logins from the same source IP
+#    (matches: auth_fails[ip] >= threshold, default threshold=3)
+# ---------------------------------------------------------------------------
+index=security sourcetype=linux_secure "Failed password"
+| rex "from (?<src_ip>\d+\.\d+\.\d+\.\d+)"
+| stats count as failed_logins by src_ip
+| where failed_logins >= 3
+| sort -failed_logins
+
+# Result: 203.0.113.42 -> 4 failed logins (flagged)
+
+# ---------------------------------------------------------------------------
+# 2) Firewall blocks per source IP
+#    (matches: fw_blocks[ip] count from UFW BLOCK lines)
+# ---------------------------------------------------------------------------
+index=security sourcetype=linux_firewall "[UFW BLOCK]"
+| rex "SRC=(?<src_ip>\S+)"
+| stats count as blocked_connections by src_ip
+| sort -blocked_connections
+
+# Result: 203.0.113.42 -> 2 blocks, 45.146.165.9 -> 2 blocks
+
+# ---------------------------------------------------------------------------
+# 3) High-confidence correlation: same IP in BOTH auth failures and
+#    firewall blocks (matches: set(auth_fails) & set(fw_blocks))
+# ---------------------------------------------------------------------------
+index=security
+| eval event_type=case(
+    sourcetype="linux_secure" AND match(_raw, "Failed password"), "auth_fail",
+    sourcetype="linux_firewall" AND match(_raw, "\[UFW BLOCK\]"), "fw_block")
+| where isnotnull(event_type)
+| rex field=_raw "(?:from |SRC=)(?<src_ip>\d+\.\d+\.\d+\.\d+)"
+| stats dc(event_type) as source_types, count as total_events by src_ip
+| where source_types=2
+| sort -total_events
+
+# Result: 203.0.113.42 -> source_types=2, total_events=6 (HIGH CONFIDENCE)
+# This is the same IP the AWS/Athena pipeline flags as the top-priority
+# threat: it's both brute-forcing SSH AND getting firewall-blocked.
+# 45.146.165.9 shows up in firewall blocks alone but doesn't correlate,
+# which correctly excludes it from the high-confidence result.
